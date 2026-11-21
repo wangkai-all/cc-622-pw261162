@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>快件段间延误分析</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="page-head">
+    <div>
+      <p class="eyebrow">分拨运营 · 段间时效</p>
+      <h1>快件段间延误分析</h1>
+      <p class="lede">
+        每件快件按「入分拣 → 出场 → 到件」切成两段。晚补一条出场时间会同时改写相邻两段，
+        因此先看原慢件分布，再补交改派与出场，最后比较段间延误。
+      </p>
+    </div>
+    <button id="theme-toggle" class="ghost theme-toggle" type="button" aria-label="切换深浅色">
+      深色
+    </button>
+  </header>
+
+  <section class="controls" aria-label="数据与操作">
+    <label>随机种子
+      <input id="seed" type="number" value="20261121" min="0" step="1" inputmode="numeric">
+    </label>
+    <label>生成件数
+      <input id="count" type="number" value="36" min="1" max="500" step="1" inputmode="numeric">
+    </label>
+    <div class="button-row">
+      <button id="btn-generate" class="primary" type="button">生成原慢件分布</button>
+      <button id="btn-late" type="button" disabled>补交改派和出场</button>
+      <button id="btn-segments" type="button" disabled>查看段间延误</button>
+      <button id="btn-export" class="ghost" type="button" disabled>导出 CSV</button>
+    </div>
+  </section>
+
+  <p id="status" class="status" role="status" aria-live="polite">尚未生成数据。点击「生成原慢件分布」开始。</p>
+
+  <main id="results" class="results" data-evidence-result="未生成">
+    <section id="step-generate" class="panel" hidden aria-labelledby="generate-title">
+      <div class="panel-head">
+        <div>
+          <h2 id="generate-title">原慢件分布</h2>
+          <p class="panel-sub" id="generate-sub"></p>
+        </div>
+        <span class="badge" id="generate-badge"></span>
+      </div>
+      <div class="stat-row" id="generate-stats"></div>
+      <div class="chart-card">
+        <div class="chart-head">
+          <h3>各网点慢段责任</h3>
+          <p>按超标段归属计数：出场积压记在出发网点，到件传播记在目的网点。同一件若两段都慢，两个网点各记一段，但整件只算一件慢件。</p>
+        </div>
+        <div id="generate-site-chart" class="chart"></div>
+        <table class="data-table" id="generate-segment-table">
+          <caption>原记录的分段情况（未补交出场的口径）</caption>
+          <thead>
+            <tr><th scope="col">分段</th><th scope="col" class="num">已测段数</th><th scope="col" class="num">慢段数</th><th scope="col" class="num">超出合计（分）</th><th scope="col">为什么可能为空</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="notice" id="generate-missing"></div>
+    </section>
+
+    <section id="step-late" class="panel" hidden aria-labelledby="late-title">
+      <div class="panel-head">
+        <div>
+          <h2 id="late-title">补交改派和出场</h2>
+          <p class="panel-sub">补交的出场时间是两个分段的交界：它同时改变「入分拣→出场」和「出场→到件」，也会改变谁是最先超标段。</p>
+        </div>
+        <span class="badge" id="late-badge"></span>
+      </div>
+      <div class="stat-row" id="late-stats"></div>
+      <div class="split">
+        <div class="card">
+          <h3>本次补交</h3>
+          <ul id="late-applied" class="event-list"></ul>
+          <div id="late-ignored"></div>
+        </div>
+        <div class="card">
+          <h3>补交后仍缺时间的件</h3>
+          <p class="muted small">这些件保留在分析结果和导出文件中，不因缺时间被丢弃。</p>
+          <ul id="late-missing" class="event-list compact"></ul>
+        </div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-head">
+          <h3>补交与改派引起的变化</h3>
+          <p>逐件对比补交前后。改派会改变归属网点，即使时长不变也会列出。</p>
+        </div>
+        <div class="table-scroll">
+          <table class="data-table" id="late-changes">
+            <thead>
+              <tr>
+                <th scope="col">快件</th>
+                <th scope="col">改派 / 路由</th>
+                <th scope="col">状态</th>
+                <th scope="col">最先超标段</th>
+                <th scope="col">分段变化（补交前 → 补交后）</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section id="step-segments" class="panel" hidden aria-labelledby="segments-title">
+      <div class="panel-head">
+        <div>
+          <h2 id="segments-title">段间延误</h2>
+          <p class="panel-sub">同一批数据，两种归因口径并列。两种口径的合计都必须等于总延误，任何一列多出来都说明重复计费。</p>
+        </div>
+        <span class="badge" id="segments-badge"></span>
+      </div>
+      <div id="segments-consistency" class="check-banner"></div>
+      <div class="chart-card">
+        <div class="chart-head">
+          <h3>分段延误归因</h3>
+          <p>「分摊」按各段自身的超出分钟计；「最先超标」把整件延误记到最先超标的段，视其后延误为后果。</p>
+        </div>
+        <div class="legend" id="attribution-legend"></div>
+        <div id="attribution-chart" class="chart"></div>
+        <table class="data-table" id="attribution-table">
+          <caption>两套口径的数值明细</caption>
+          <thead>
+            <tr><th scope="col">分段</th><th scope="col" class="num">慢段数</th><th scope="col" class="num">本段超出（分）</th><th scope="col" class="num">分摊口径（分）</th><th scope="col" class="num">最先超标口径（分）</th><th scope="col" class="num">未测段数</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="chart-card">
+        <div class="chart-head">
+          <h3>网点积压与传播</h3>
+          <p>场内积压计在出发网点（入分拣→出场），到件传播计在目的网点（出场→到件）。</p>
+        </div>
+        <div class="legend" id="site-legend"></div>
+        <div id="site-chart" class="chart"></div>
+        <div class="table-scroll">
+          <table class="data-table" id="site-table">
+            <thead>
+              <tr><th scope="col">网点</th><th scope="col" class="num">经手件数</th><th scope="col" class="num">慢段责任</th><th scope="col" class="num">时间不全</th><th scope="col" class="num">积压延误（分）</th><th scope="col" class="num">传播延误（分）</th><th scope="col" class="num">延误合计（分）</th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-head">
+          <h3>最先超标段解释</h3>
+          <p>逐件说明哪一段先超标；其后仍有超标段的，作为后果列出，不重复计入「最先超标」口径。</p>
+        </div>
+        <div class="table-scroll">
+          <table class="data-table" id="explanation-table">
+            <thead>
+              <tr><th scope="col">快件</th><th scope="col">最先超标段</th><th scope="col" class="num">本段超出（分）</th><th scope="col" class="num">整件延误（分）</th><th scope="col">其后的超标段</th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div id="tooltip" class="tooltip" role="tooltip" hidden></div>
+  <script src="/app.js" type="module"></script>
+</body>
+</html>
